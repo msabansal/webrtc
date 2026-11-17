@@ -8,7 +8,7 @@ use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use std::time::SystemTime;
+use std::time::Instant;
 
 use association_internal::*;
 use association_stats::*;

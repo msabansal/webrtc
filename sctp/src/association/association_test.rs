@@ -1700,7 +1700,7 @@ async fn test_assoc_delayed_ack() -> Result<()> {
     assert_eq!(n, sbuf.len(), "unexpected length of received data");
 
     // Repeat calling br.Tick() until the buffered amount becomes 0
-    let since = SystemTime::now();
+    let since = Instant::now();
     let mut n_packets_received = 0;
     while s0.buffered_amount() > 0 {
         loop {
@@ -1725,7 +1725,7 @@ async fn test_assoc_delayed_ack() -> Result<()> {
             n_packets_received += 1;
         }
     }
-    let delay = (SystemTime::now().duration_since(since).unwrap().as_millis() as f64) / 1000.0;
+    let delay = (since.elapsed().as_millis() as f64) / 1000.0;
     log::debug!("received in {} seconds", delay);
     assert!(delay >= 0.2, "should be >= 200msec");
 

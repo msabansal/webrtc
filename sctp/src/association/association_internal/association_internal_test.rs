@@ -2,6 +2,7 @@ use std::io;
 use std::net::SocketAddr;
 
 use super::*;
+use crate::chunk::chunk_selective_ack::GapAckBlock;
 
 type Result<T> = std::result::Result<T, util::Error>;
 
@@ -100,6 +101,52 @@ fn test_config_mtu() -> Result<()> {
         8192 - (COMMON_HEADER_SIZE + DATA_CHUNK_HEADER_SIZE)
     );
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_sack_future_send_timestamp_keeps_ack_progress() -> Result<()> {
+    for gap_ack_blocks in [vec![], vec![GapAckBlock { start: 1, end: 1 }]] {
+        let mut a = create_association_internal(Config {
+            net_conn: Arc::new(DumbConn {}),
+            max_receive_buffer_size: 0,
+            max_message_size: 0,
+            mtu: 0,
+            name: "client".to_owned(),
+            local_port: 5000,
+            remote_port: 5000,
+        });
+        a.set_state(AssociationState::Established);
+        a.cumulative_tsn_ack_point = 9;
+        a.min_tsn2measure_rtt = 10;
+        a.my_next_tsn = 11;
+        let mut chunk = ChunkPayloadData {
+            tsn: 10,
+            stream_identifier: 1,
+            user_data: Bytes::from_static(b"ABC"),
+            nsent: 1,
+            ..Default::default()
+        };
+        // Model the negative elapsed time observed when the wall clock steps back.
+        chunk.since += std::time::Duration::from_secs(60);
+        a.inflight_queue.push_no_check(chunk);
+        a.handle_sack(&ChunkSelectiveAck {
+            cumulative_tsn_ack: if gap_ack_blocks.is_empty() { 10 } else { 9 },
+            advertised_receiver_window_credit: 1500,
+            gap_ack_blocks,
+            ..Default::default()
+        })
+        .await?;
+        let final_ack = ChunkSelectiveAck {
+            cumulative_tsn_ack: 10,
+            advertised_receiver_window_credit: 1500,
+            ..Default::default()
+        };
+        a.handle_sack(&final_ack).await?;
+        a.handle_sack(&final_ack).await?;
+        assert_eq!(a.cumulative_tsn_ack_point, 10);
+        assert!(a.inflight_queue.get(10).is_none());
+    }
     Ok(())
 }
 
