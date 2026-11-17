@@ -2,9 +2,9 @@ name: coverage
 
 on:
   push:
-    branches: [ master, v0.20.x, v0.17.x ]
+    branches: [ master, v1.x, v0.21.x, v0.20.x, v0.17.x ]
   pull_request:
-    branches: [ master, v0.20.x, v0.17.x ]
+    branches: [ master, v1.x, v0.21.x, v0.20.x, v0.17.x ]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -15,7 +15,7 @@ env:
 
 jobs:
   grcov:
-    name: Coverage
+    name: Test with runtime (${{ matrix.runtime.name }})
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -23,45 +23,47 @@ jobs:
           - ubuntu-latest
         toolchain:
           - nightly
-        cargo_flags:
-          - "--all-features"
+        runtime:
+          - name: tokio
+            flags: ""
+          - name: smol
+            # A provider is paired with the runtime: this job varies the *runtime*, and
+            # constructing a peer connection resolves one. `--no-default-features` alone drops
+            # the crypto feature too.
+            flags: "--no-default-features --features runtime-smol,crypto-ring"
     steps:
       - name: Checkout source code
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install Rust
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@master
         with:
-          profile: minimal
           toolchain: ${{ matrix.toolchain }}
-          override: true
+          components: llvm-tools-preview
 
       - name: Install grcov
-        uses: actions-rs/install@v0.1
+        uses: taiki-e/install-action@v2
         with:
-          crate: grcov
-          version: latest
-          use-tool-cache: true
+          tool: grcov
 
       - name: Test
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
-          args: --all --no-fail-fast ${{ matrix.cargo_flags }}
+        run: cargo test --all --no-fail-fast ${{ matrix.runtime.flags }}
         env:
           CARGO_INCREMENTAL: "0"
-          RUSTFLAGS: '-Ccodegen-units=1 -Copt-level=0 -Clink-dead-code -Coverflow-checks=off -Zpanic_abort_tests -Cpanic=abort -Cdebug-assertions=off -Cprofile-generate=target/debug'
-          RUSTDOCFLAGS: '-Ccodegen-units=1 -Copt-level=0 -Clink-dead-code -Coverflow-checks=off -Zpanic_abort_tests -Cpanic=abort -Cdebug-assertions=off -Cprofile-generate=target/debug'
+          RUSTFLAGS: "-Cinstrument-coverage"
+          LLVM_PROFILE_FILE: "cargo-test-%p-%m.profraw"
 
       - name: Generate coverage data
         id: grcov
-        # uses: actions-rs/grcov@v0.1
         run: |
-          grcov target/debug/ \
-              --branch \
-              --llvm \
+          grcov . \
+              --binary-path ./target/debug/ \
               --source-dir . \
+              --output-type lcov \
               --output-path lcov.info \
+              --branch \
               --ignore='/**' \
               --ignore='C:/**' \
               --ignore='../**' \
@@ -69,21 +71,16 @@ jobs:
               --excl-line "#\\[derive\\(" \
               --excl-br-line "#\\[derive\\(" \
               --excl-start "#\\[cfg\\(test\\)\\]" \
-              --excl-br-start "#\\[cfg\\(test\\)\\]" \
-              --commit-sha ${{ github.sha }} \
-              --service-job-id ${{ github.job }} \
-              --service-name "GitHub Actions" \
-              --service-number ${{ github.run_id }}
+              --excl-br-start "#\\[cfg\\(test\\)\\]"
       - name: Upload coverage as artifact
         uses: actions/upload-artifact@v4
         with:
-          name: lcov.info
-          # path: ${{ steps.grcov.outputs.report }}
+          name: lcov-${{ matrix.runtime.name }}.info
           path: lcov.info
 
       - name: Upload coverage to codecov.io
-        uses: codecov/codecov-action@v1
+        uses: codecov/codecov-action@v5
         with:
-          # file: ${{ steps.grcov.outputs.report }}
-          file: lcov.info
+          files: lcov.info
+          flags: ${{ matrix.runtime.name }}
           fail_ci_if_error: true
